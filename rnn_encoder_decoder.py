@@ -4,7 +4,7 @@
 #
 # RNN Encoder-Decoder for phrase based translation.
 #
-# Author: <sapphirejyt@gmail.com>
+# Author: yatbear <sapphirejyt@gmail.com>
 #         2015-11-19: Created for MT independent study.
 
 import theano.tensor as T
@@ -13,8 +13,6 @@ import numpy as np
 class rnn_encoder_decoder(object):
 
     def __init__(self, nx, ny, ne=500, nh=1000):
-        #  x :: source phrase (nx dimensional one hot vectors)
-        #  y :: target phrase (ny dimensional one hot vectors)
         # nx :: source vocabulary size
         # ne :: word embedding dimension
         # nh :: number of hidden units
@@ -75,14 +73,9 @@ class rnn_encoder_decoder(object):
         self.params = [self.emb, self.Wx, self.Wh_e, self.V_e, 
             self.V_d, self.Wh_d, self.Wy, self.Oh, self.Oy, self.Oc, self.Gl, self.Gr]
 
-        # Build input from embedding matrix
-        indxs = T.imatrix()
-        ex = self.emb[idxs].reshape((idxs.shape[0], ne))
-
-
     # Encode an input phrase into a summary vector
     def encode(x):
-        # Construct recursion
+        # Construct encoder recursion 
         def en_recurrence(x_t, h_e_tm1):
             h_e_t = T.tanh(T.dot(self.Wx, x_t) 
                         + T.dot(self.Wh_e, h_e_tm1))
@@ -96,17 +89,14 @@ class rnn_encoder_decoder(object):
 
         # Compute the summary vector
         c = T.tanh(T.dot(self.V_e, h_e[-1]))
-
         return c
 
-
-    def decode(x, y):
-        # Get the summary vector
-        c = encode(x)
+    # Decode the summary vector into a target sequence
+    def decode(c, y):
         # Initialize the decoder hidden state
         h_d_0 = T.tanh(T.dot(self.V_d, c))
 
-        # Construct recursion
+        # Construct decoder recursion
         def de_recurrence(h_d_tm1, c, y_t):
             # Compute hidden layer
             h_t = T.tanh(T.dot(self.Wc, c) 
@@ -114,7 +104,7 @@ class rnn_encoder_decoder(object):
                         + T.dot(self.Wy, y_t))
             
             # Compute output layer
-            ss_t = T.dot(self.Oh, h_t) + T.dot(self.Oy, y_tm1), T.dot(self.Oc, c)
+            ss_t = T.dot(self.Oh, h_t) + T.dot(self.Oy, y_tm1) + T.dot(self.Oc, c)
 
             # Compute maxout units
             for i in xrange(nh):
@@ -126,10 +116,81 @@ class rnn_encoder_decoder(object):
 
             # Compute the negative log-likelihood
             nll_t = -T.log(p_t)
-
             return [h_t, nll_t]
 
         [h, nll], _ = T.scan(fn=de_recurrence,
                             outputs_info=[h_d_0, None],
                             non_sequences=[c, self.y_0],
                             n_steps=y.shape[0])
+        return T.mean(nll)
+
+    def train(self):
+        # Build input from embedding matrix
+        idxs = T.imatrix()
+        x = self.emb[idxs].reshape((idxs.shape[0], ne))
+        y_seq = T.ivector('y_sequence') # labels
+
+        # Get the summary vector
+        c = encode(x)
+        # Get the negative log-likelihood
+        seq_nll = decode(c, y_seq) 
+
+        # Compute all the gradients automatically to maximize the log-likelihood  
+        lr = T.scalar('lr')
+        seq_gradients = T.grad(seq_nll, self.params)
+        seq_updates = OrderedDict((p, p - lr*g)
+                                    for p, g in zip(self.params, seq_gradients))
+        self.classify = theano.function(inputs=[idxs, y_seq, lr],
+                                        outputs=seq_nll,
+                                        updates=seq_updates)
+
+    def test(self):
+        # Build input from embedding matrix
+        idxs = T.imatrix()
+        x = self.emb[idxs].reshape((idxs.shape[0], ne))
+        y_seq = T.ivector('y_sequence') # labels
+
+        # Get the summary vector
+        c = encode(x)
+        # Get the negative log-likelihood
+        seq_nll = decode(c, y_seq) 
+        return seq_nll # use as rescoring feature
+
+def main():
+    # Read input
+    phrase_table = [line for line in open('phrase-table').readlines()]
+    x_phrases = [line[0].strip().split() for line in phrase_table]
+    y_phrases = [line[1].strip().split() for line in phrase_table]
+
+    # Build source and target vocabularies
+    x_vcb = [line.strip().split()[1] for line in open('en.vcb').readlines()]
+    y_vcb = [line.strip().split()[1] for line in open('fr.vcb').readlines()]
+
+    # Collect lexical counts
+    x_lexc = [int(line.split()[2]) for line in open('en.vcb').readlines()]
+    y_lexc = [int(line.split()[2]) for line in open('fr.vcb').readlines()]
+
+    nx, ny = len(x_vcb)+1, len(y_vcb)+1 # add OOV to vocab
+    
+    # Prepare training data
+    X = list() 
+    Y = list() 
+
+    for phrase in x_phrases: 
+        # Construct training phrases as one-hot-vectors
+        x = np.zeros((len(x_phrases), nx)) 
+        for (i, word) in enumerate(phrase):
+            j = x_vcb.index(word) if word in x_vcb else nx-1
+            x[i][j] = 1.0 
+        X.append(x) 
+
+    for phrase in y_phrases:
+        # Construct training labels as one-hot-vectors
+        y = np.zeros((len(y_phrases), ny)) 
+        for (i, word) in enumerate(phrase):
+            j = y_vcb.index(word) if word in y_vcb else ny-1
+            y[i][j] = 1.0
+        Y.append(y) 
+
+if __name__ == '__main__':
+    main()
