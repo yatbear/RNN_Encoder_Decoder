@@ -7,6 +7,7 @@
 # Author: yatbear <sapphirejyt@gmail.com>
 #         2015-11-19: Created for MT independent study.
 #         2015-12-10: Fixed major bugs.
+#         2015-12-14: Finish the vanilla version.
 
 import theano
 import theano.tensor as T
@@ -16,11 +17,12 @@ from collections import OrderedDict
 
 class rnn_encoder_decoder(object):
 
-    def __init__(self, nx, ny, ne=500, nh=1000):
+    def __init__(self, nx, ny, ne=100, nh=1000, lr=0.01):
         # nx :: source vocabulary size
         # ne :: word embedding dimension
         # nh :: number of hidden units
         # ny :: target vocabulary size
+        # lr :: learning rate
 
         # Parameters of the RNN encoder
         self.emb = theano.shared(name='embeddings',
@@ -35,6 +37,9 @@ class rnn_encoder_decoder(object):
         self.V_e = theano.shared(name='V_e',
                                 value=0.2 * np.random.uniform(-1.0, 1.0, (nh, nh))
                                 .astype(theano.config.floatX))
+        self.bh_e = theano.shared(name='bh_e',
+                                value=np.zeros(nh,
+                                dtype=theano.config.floatX))
         self.h_e_0 = theano.shared(name='h_e_0',
                                 value=np.zeros(nh, 
                                 dtype=theano.config.floatX))
@@ -50,8 +55,11 @@ class rnn_encoder_decoder(object):
                                 value=0.2 * np.random.uniform(-1.0, 1.0, (nh, nh))
                                 .astype(theano.config.floatX))
         self.Wy = theano.shared(name='Wy',
-                                value=0.2 * np.random.uniform(-1.0, 1.0, (ny, nh))
+                                value=0.2 * np.random.uniform(-1.0, 1.0, (nh, ny))
                                 .astype(theano.config.floatX))
+        self.bh_d = theano.shared(name='bh_d',
+                                value=np.zeros(nh,
+                                dtype=theano.config.floatX))
         self.y_0 = theano.shared(name='y_0',
                                 value=np.zeros(ny,
                                 dtype=theano.config.floatX))
@@ -84,14 +92,13 @@ class rnn_encoder_decoder(object):
                                 .astype(theano.config.floatX))
 
         # Bundle
-        self.params = [self.emb, self.Wx, self.Wh_e, self.V_e, 
-            self.V_d, self.Wh_d, self.Wy, self.Oh, self.Oy, self.Oc, self.Gl, self.Gr]
-
-    
-    def encoder_decoder_init(self, x_seq, y_seq, lr):
-        # x_seq :: source phrase as one-hot-vectors
-        # y_seq :: target phrase as one-hot-vectors
-        #    lr :: learning rate
+        self.params = [self.emb, self.Wx, self.Wh_e, self.V_e, self.bh_e, self.V_d, 
+            self.Wh_d, self.Wy, self.bh_d, self.Oh, self.Oy, self.Oc, self.Gl, self.Gr]
+        self.names = ['embeddings', 'Wx', 'Wh_e', 'V_e', 'bh_e', 'V_d', 
+            'Wh_d', 'Wy', 'bh_d', 'Oh', 'Oy', 'Oc', 'Gl', 'Gr']
+        
+        x_seq = T.fmatrix('x_seq')
+        y_seq = T.fmatrix('y_seq')
 
         # Encode an input phrase into a summary vector
         def encode(x_seq):   
@@ -101,7 +108,7 @@ class rnn_encoder_decoder(object):
             # Construct encoder recursion 
             def en_recurrence(x_t, h_e_tm1):
                 h_e_t = T.tanh(T.dot(self.Wx, x_t) 
-                            + T.dot(self.Wh_e, h_e_tm1))
+                            + T.dot(self.Wh_e, h_e_tm1) + self.bh_e)
                 return h_e_t
 
             # Compute the encoder hidden state recursively
@@ -127,12 +134,11 @@ class rnn_encoder_decoder(object):
                 # Compute hidden layer
                 h_d_t = T.tanh(T.dot(self.Wc, c) 
                             + T.dot(self.Wh_d, self.h_d_0)
-                            + T.dot(y_t, self.Wy))
-
+                            + T.dot(self.Wy, y_t) + self.bh_d)
                 self.h_d_0 = h_d_t[-1]
             
                 # Compute output layer
-                ss_t = T.dot(self.Oh, h_d_t) + T.dot(self.Oy, y_tm1) + T.dot(self.Oc, c)
+                ss_t = T.dot(self.Oh, h_d_t) + T.dot(self.Oy, y_tm1) + T.dot(self.Oc, c) 
 
                 # Compute maxout units
                 # s_t = ds.max_pool_2d(ss_t, (1, 2), ignore_border=True) 
@@ -159,22 +165,17 @@ class rnn_encoder_decoder(object):
         seq_nll = decode(c, y_seq) 
         # print seq_nll.eval()
 
-        # Compute all the gradients automatically to maximize the log-likelihood  
-        # lr = T.scalar('lr')   
+        # Compute all the gradients automatically to maximize the log-likelihood     
         seq_gradients = T.grad(seq_nll, self.params)
         seq_updates = OrderedDict((p, p - lr*g)
                                     for p, g in zip(self.params, seq_gradients))
 
-        # print seq_gradients.eval()
-        X = T.fmatrix('X')
-        Y = T.fmatrix('Y')
-
-        self.train_pair = theano.function(inputs=[X, Y],
+        self.train_pair = theano.function(inputs=[x_seq, y_seq],
                                         outputs=seq_nll,
                                         on_unused_input='ignore',
                                         allow_input_downcast=True,
                                         updates=seq_updates)
-        self.score_pair = theano.function(inputs=[X, Y], 
+        self.score_pair = theano.function(inputs=[x_seq, y_seq], 
                                         on_unused_input='ignore', 
                                         allow_input_downcast=True, 
                                         outputs=seq_nll)
@@ -187,51 +188,6 @@ class rnn_encoder_decoder(object):
         nll = self.score_pair(x_seq, y_seq)
         return nll
 
-def main():
-    # Read input 
-    phrase_table = [line for line in open('phrase-table').readlines()][9217377:9217477]
-    x_phrases = [line[0].strip().split() for line in phrase_table]
-    y_phrases = [line[1].strip().split() for line in phrase_table]
-
-    # Build source and target vocabularies
-    x_vcb = [line.strip().split()[1] for line in open('en.vcb').readlines()]
-    y_vcb = [line.strip().split()[1] for line in open('fr.vcb').readlines()]
-
-    # Collect lexical counts
-    x_lexc = [int(line.split()[2]) for line in open('en.vcb').readlines()]
-    y_lexc = [int(line.split()[2]) for line in open('fr.vcb').readlines()]
-
-    nx, ny = len(x_vcb)+1, len(y_vcb)+1 # add OOV to vocab
-    
-    # Prepare training data
-    X = list() 
-    Y = list() 
-
-    for phrase in x_phrases: 
-        # Construct training phrases as one-hot-vectors
-        x = np.zeros((len(x_phrases), nx)) 
-        for (i, word) in enumerate(phrase):
-            j = x_vcb.index(word) if word in x_vcb else nx-1
-            x[i][j] = 1.0 
-        X.append(x) 
-
-    for phrase in y_phrases:
-        # Construct training labels as one-hot-vectors
-        y = np.zeros((len(y_phrases), ny))
-        for (i, word) in enumerate(phrase):
-            j = y_vcb.index(word) if word in y_vcb else ny-1
-            y[i][j] = 1.0
-        Y.append(y) 
-
-    rnn = rnn_encoder_decoder(nx, ny)
-    lr = theano.shared(0.01)
-    for i, (x, y) in enumerate(zip(X, Y)):
-        rnn.encoder_decoder_init(x, y, lr)
-        score = rnn.train(x, y)
-        print phrase_table[i][0], phrase_table[i][1], phrase_table[i][2], score
-    # for i, (x, y) in enumerate(zip(X, Y)):
-    #     score = rnn.score(x, y)
-    #     print phrase_table[i][0], phrase_table[i][1], phrase_table[i][2], score
-
-if __name__ == '__main__':
-    main()
+    def save(self, path):
+        for param, name in zip(self.params, self.names):
+            np.save(os.path.join(path, name + '.npy'), param.get_value())
