@@ -7,7 +7,7 @@
 # Author: yatbear <sapphirejyt@gmail.com>
 #         2015-11-19: Created for MT independent study.
 #         2015-12-10: Fixed major bugs.
-#         2015-12-14: Finish the vanilla version.
+#         2015-12-14: Finished the vanilla version.
 
 import theano
 import theano.tensor as T
@@ -93,9 +93,9 @@ class rnn_encoder_decoder(object):
 
         # Bundle
         self.params = [self.emb, self.Wx, self.Wh_e, self.V_e, self.bh_e, self.V_d, 
-            self.Wh_d, self.Wy, self.bh_d, self.Oh, self.Oy, self.Oc, self.Gl, self.Gr]
+                    self.Wh_d, self.Wy, self.bh_d, self.Oh, self.Oy, self.Oc, self.Gl, self.Gr]
         self.names = ['embeddings', 'Wx', 'Wh_e', 'V_e', 'bh_e', 'V_d', 
-            'Wh_d', 'Wy', 'bh_d', 'Oh', 'Oy', 'Oc', 'Gl', 'Gr']
+                    'Wh_d', 'Wy', 'bh_d', 'Oh', 'Oy', 'Oc', 'Gl', 'Gr']
         
         x_seq = T.fmatrix('x_seq')
         y_seq = T.fmatrix('y_seq')
@@ -191,3 +191,4 @@ class rnn_encoder_decoder(object):
     def save(self, path):
         for param, name in zip(self.params, self.names):
             np.save(os.path.join(path, name + '.npy'), param.get_value())
+            

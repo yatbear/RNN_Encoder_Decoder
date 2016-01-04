@@ -1,2 +1,3 @@
-# RNN_Encoder_Decoder
-Machine Translation Project
+# RNN Encoder Decoder 
+
+Deep Learning for Phrase Based Machine Translation
